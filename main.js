@@ -41,6 +41,11 @@ history: {
     applying: false,
     debounce: null
 }
+    panMode: false,
+    zoomPoint: { x: 0, y: 0 },
+    sizeUnit: 'px',
+    keepAspectRatio: false,
+    aspectRatio: 1
 };
 
 // Elementos DOM
@@ -1195,6 +1200,30 @@ updateCanvasSize();
 updateCanvasBorder(); // Esta função ainda usa borderWidth e borderColor? Vamos ajustá-la.
 
 recordHistorySnapshot();
+}
+
+function convertPxToUnit(valuePx, unit = state.sizeUnit) {
+if (unit === 'mm') {
+    return valuePx / PX_PER_MM;
+}
+
+return valuePx;
+}
+
+function convertUnitToPx(value, unit = state.sizeUnit) {
+if (unit === 'mm') {
+    return value * PX_PER_MM;
+}
+
+return value;
+}
+
+function formatDimension(value, unit = state.sizeUnit) {
+if (unit === 'mm') {
+    return parseFloat(value.toFixed(2)).toString();
+}
+
+return Math.round(value).toString();
 }
 
 function convertPxToUnit(valuePx, unit = state.sizeUnit) {
@@ -2445,6 +2474,13 @@ const applySavedBackground = (side) => {
     if (side === state.currentSide) {
         document.getElementById('global-background-color').value = rgbToHex(savedColor);
     }
+    state.canvases[side].setBackgroundColor(savedColor, () => {
+        state.canvases[side].renderAll();
+
+        if (side === state.currentSide) {
+            document.getElementById('global-background-color').value = rgbToHex(savedColor);
+        }
+    });
 };
 
 applySavedBackground('front');
