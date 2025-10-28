@@ -1,10 +1,12 @@
 // Estado da aplicação
+const PX_PER_MM = 3.78;
+
 const state = {
-currentTool: 'select',
-currentSide: 'front',
-cardConfig: {
-    width: 88,
-    height: 63,
+    currentTool: 'select',
+    currentSide: 'front',
+    cardConfig: {
+        width: 88,
+        height: 63,
     rounded: false,
     borderRadius: 3,
 },
@@ -26,8 +28,11 @@ panStartX: 0,
 panStartY: 0,
 containerStartX: 0,
 containerStartY: 0,
-panMode: false,
-zoomPoint: { x: 0, y: 0 }
+    panMode: false,
+    zoomPoint: { x: 0, y: 0 },
+    sizeUnit: 'px',
+    keepAspectRatio: false,
+    aspectRatio: 1
 };
 
 // Elementos DOM
@@ -55,15 +60,19 @@ const qrcodeModal = document.getElementById('qrcode-modal');
 const closeModal = document.querySelector('#qrcode-modal .close');
 const generateQRCodeBtn = document.getElementById('generate-qrcode');
 
+let sizeUnitSelect = null;
+let aspectLockBtn = null;
+
 // Inicialização
 document.addEventListener('DOMContentLoaded', function() {
-initializeFabricCanvases();
-setupEventListeners();
-updateZoomDisplay();
-updateBleedLines();
-updateCanvasSize();
-centerCanvasContainer();
-loadFromSessionStorage();
+    initializeFabricCanvases();
+    setupEventListeners();
+    initializeSizeControls();
+    updateZoomDisplay();
+    updateBleedLines();
+    updateCanvasSize();
+    centerCanvasContainer();
+    loadFromSessionStorage();
 
 // Inicializar o controle de bordas arredondadas
 const roundedSelect = document.getElementById('card-rounded');
@@ -193,7 +202,9 @@ function applyGlobalBackgroundColor() {
     const currentCanvas = state.canvases[state.currentSide];
     currentCanvas.backgroundColor = color;
     currentCanvas.renderAll();
-    
+
+    updateGlobalBackgroundColorInput();
+
     // saveToSessionStorage();
 }
 
@@ -527,14 +538,112 @@ hideLabelsBtn.addEventListener('click', toggleLabels);
 hideBleedBtn.addEventListener('click', toggleBleed);
 
 // Teclado
-document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keydown', handleKeyDown);
+}
+
+function initializeSizeControls() {
+    const widthInput = document.getElementById('width');
+    const heightInput = document.getElementById('height');
+
+    if (!widthInput || !heightInput) {
+        return;
+    }
+
+    // Evitar criar os controles mais de uma vez
+    if (sizeUnitSelect) {
+        sizeUnitSelect.value = state.sizeUnit;
+    }
+
+    if (!sizeUnitSelect) {
+        sizeUnitSelect = document.createElement('select');
+        sizeUnitSelect.id = 'size-unit';
+        sizeUnitSelect.className = 'size-unit-select';
+
+        const pxOption = document.createElement('option');
+        pxOption.value = 'px';
+        pxOption.textContent = 'px';
+
+        const mmOption = document.createElement('option');
+        mmOption.value = 'mm';
+        mmOption.textContent = 'mm';
+
+        sizeUnitSelect.appendChild(pxOption);
+        sizeUnitSelect.appendChild(mmOption);
+        sizeUnitSelect.value = state.sizeUnit;
+
+        sizeUnitSelect.addEventListener('change', () => {
+            state.sizeUnit = sizeUnitSelect.value;
+            updatePropertiesPanel();
+        });
+    }
+
+    if (!aspectLockBtn) {
+        aspectLockBtn = document.createElement('button');
+        aspectLockBtn.type = 'button';
+        aspectLockBtn.id = 'size-lock';
+        aspectLockBtn.className = 'size-lock-toggle';
+        updateAspectLockButton();
+
+        aspectLockBtn.addEventListener('click', () => {
+            state.keepAspectRatio = !state.keepAspectRatio;
+            updateAspectLockButton();
+
+            if (state.keepAspectRatio && state.selectedObjects.length > 0) {
+                const object = state.selectedObjects[0];
+                state.aspectRatio = getObjectAspectRatio(object);
+            }
+        });
+    }
+
+    if (aspectLockBtn) {
+        updateAspectLockButton();
+    }
+
+    const existingWrapper = document.querySelector('.size-extra-controls');
+    if (existingWrapper) {
+        existingWrapper.appendChild(sizeUnitSelect);
+        existingWrapper.appendChild(aspectLockBtn);
+        return;
+    }
+
+    // Adicionar os controles próximos aos inputs de largura/altura
+    const controlsWrapper = document.createElement('div');
+    controlsWrapper.className = 'size-extra-controls';
+    controlsWrapper.appendChild(sizeUnitSelect);
+    controlsWrapper.appendChild(aspectLockBtn);
+
+    if (heightInput.parentElement) {
+        heightInput.parentElement.appendChild(controlsWrapper);
+    } else {
+        heightInput.insertAdjacentElement('afterend', controlsWrapper);
+    }
+}
+
+function updateAspectLockButton() {
+    if (!aspectLockBtn) return;
+
+    aspectLockBtn.textContent = state.keepAspectRatio ? '🔒' : '🔓';
+    aspectLockBtn.title = state.keepAspectRatio ? 'Desbloquear proporção' : 'Bloquear proporção';
+    aspectLockBtn.classList.toggle('locked', state.keepAspectRatio);
+    aspectLockBtn.setAttribute('aria-pressed', state.keepAspectRatio ? 'true' : 'false');
+}
+
+function getObjectAspectRatio(object) {
+    const widthPx = object.getScaledWidth ? object.getScaledWidth() : object.width * object.scaleX;
+    const heightPx = object.getScaledHeight ? object.getScaledHeight() : object.height * object.scaleY;
+
+    if (!heightPx) {
+        return 1;
+    }
+
+    return widthPx / heightPx;
 }
 
 // Inicializar os canvases do Fabric.js
 function initializeFabricCanvases() {
-// Converter mm para px (aproximadamente 3.78 px por mm)
-const widthPx = state.cardConfig.width * 3.78;
-const heightPx = state.cardConfig.height * 3.78;
+// Converter mm para px
+const widthPx = state.cardConfig.width * PX_PER_MM;
+const heightPx = state.cardConfig.height * PX_PER_MM;
 
 // Canvas da frente
 state.canvases.front = new fabric.Canvas('front-canvas', {
@@ -612,8 +721,8 @@ Object.values(state.canvases).forEach(canvas => {
 
 // Atualizar tamanho dos canvases
 function updateCanvasSize() {
-const widthPx = state.cardConfig.width * 3.78;
-const heightPx = state.cardConfig.height * 3.78;
+const widthPx = state.cardConfig.width * PX_PER_MM;
+const heightPx = state.cardConfig.height * PX_PER_MM;
 
 Object.values(state.canvases).forEach(canvas => {
     canvas.setDimensions({
@@ -630,7 +739,7 @@ updateCanvasBorder();
 // Atualizar borda do canvas - FUNÇÃO CORRIGIDA
 function updateCanvasBorder() {
 // Removemos a borda, então apenas ajustamos o border-radius
-const borderRadiusPx = state.cardConfig.rounded ? state.cardConfig.borderRadius * 3.78 : 0;
+const borderRadiusPx = state.cardConfig.rounded ? state.cardConfig.borderRadius * PX_PER_MM : 0;
 
 // Aplicar border-radius aos canvases internos
 const canvases = document.querySelectorAll('.canvas-wrapper canvas');
@@ -661,7 +770,7 @@ canvasContainer.style.transform = 'translate(-50%, -50%)';
 // Atualizar linhas de sangria
 function updateBleedLines() {
 const bleedMargin = 3; // 5mm
-const bleedPx = bleedMargin * 3.78; // Converter para px
+const bleedPx = bleedMargin * PX_PER_MM; // Converter para px
 
 [frontBleed, backBleed].forEach(bleedLine => {
     bleedLine.style.width = `calc(100% - ${bleedPx * 2}px)`;
@@ -878,6 +987,30 @@ updateCanvasSize();
 updateCanvasBorder(); // Esta função ainda usa borderWidth e borderColor? Vamos ajustá-la.
 }
 
+function convertPxToUnit(valuePx, unit = state.sizeUnit) {
+if (unit === 'mm') {
+    return valuePx / PX_PER_MM;
+}
+
+return valuePx;
+}
+
+function convertUnitToPx(value, unit = state.sizeUnit) {
+if (unit === 'mm') {
+    return value * PX_PER_MM;
+}
+
+return value;
+}
+
+function formatDimension(value, unit = state.sizeUnit) {
+if (unit === 'mm') {
+    return parseFloat(value.toFixed(2)).toString();
+}
+
+return Math.round(value).toString();
+}
+
 // Atualizar painel de propriedades
 function updatePropertiesPanel() {
 if (state.selectedObjects.length === 0) {
@@ -889,11 +1022,27 @@ propertiesPanel.style.display = 'block';
 
 const object = state.selectedObjects[0];
 
+if (sizeUnitSelect) {
+    sizeUnitSelect.value = state.sizeUnit;
+}
+
 document.getElementById('pos-x').value = Math.round(object.left);
 document.getElementById('pos-y').value = Math.round(object.top);
 
-document.getElementById('width').value = Math.round(object.width * object.scaleX);
-document.getElementById('height').value = Math.round(object.height * object.scaleY);
+const widthPx = object.getScaledWidth ? object.getScaledWidth() : object.width * object.scaleX;
+const heightPx = object.getScaledHeight ? object.getScaledHeight() : object.height * object.scaleY;
+
+if (heightPx) {
+    state.aspectRatio = widthPx / heightPx;
+} else {
+    state.aspectRatio = 1;
+}
+
+const displayWidth = formatDimension(convertPxToUnit(widthPx));
+const displayHeight = formatDimension(convertPxToUnit(heightPx));
+
+document.getElementById('width').value = displayWidth;
+document.getElementById('height').value = displayHeight;
 
 document.getElementById('rotation').value = Math.round(object.angle);
 document.getElementById('rotation-value').textContent = `${Math.round(object.angle)}°`;
@@ -967,25 +1116,68 @@ currentCanvas.renderAll();
 }
 
 // Atualizar tamanho do objeto
-function updateObjectSize() {
+function updateObjectSize(e) {
 if (state.selectedObjects.length === 0) return;
 
-const width = parseInt(document.getElementById('width').value);
-const height = parseInt(document.getElementById('height').value);
+const widthInput = document.getElementById('width');
+const heightInput = document.getElementById('height');
+let widthValue = parseFloat(widthInput.value);
+let heightValue = parseFloat(heightInput.value);
+
+if (isNaN(widthValue) || isNaN(heightValue)) {
+    return;
+}
+
+const source = e && e.target ? e.target.id : null;
+let widthPx = convertUnitToPx(widthValue);
+let heightPx = convertUnitToPx(heightValue);
+
+if (state.keepAspectRatio && state.aspectRatio > 0) {
+    if (source === 'width') {
+        heightPx = widthPx / state.aspectRatio;
+        const adjustedHeight = convertPxToUnit(heightPx);
+        heightInput.value = formatDimension(adjustedHeight);
+    } else if (source === 'height') {
+        widthPx = heightPx * state.aspectRatio;
+        const adjustedWidth = convertPxToUnit(widthPx);
+        widthInput.value = formatDimension(adjustedWidth);
+    } else {
+        heightPx = widthPx / state.aspectRatio;
+        heightInput.value = formatDimension(convertPxToUnit(heightPx));
+    }
+}
 
 state.selectedObjects.forEach(object => {
-    // Calcular escala baseada nas dimensões originais
-    const scaleX = width / object.width;
-    const scaleY = height / object.height;
-    
-    object.set({
-        scaleX: scaleX,
-        scaleY: scaleY
-    });
+    const baseWidth = object.width;
+    const baseHeight = object.height;
+
+    if (!baseWidth || !baseHeight) {
+        return;
+    }
+
+    if (state.keepAspectRatio && state.aspectRatio > 0) {
+        const uniformScale = widthPx / baseWidth;
+        object.set({
+            scaleX: uniformScale,
+            scaleY: uniformScale
+        });
+    } else {
+        const scaleX = widthPx / baseWidth;
+        const scaleY = heightPx / baseHeight;
+
+        object.set({
+            scaleX: scaleX,
+            scaleY: scaleY
+        });
+    }
 });
 
 const currentCanvas = state.canvases[state.currentSide];
 currentCanvas.renderAll();
+
+if (heightPx > 0) {
+    state.aspectRatio = widthPx / heightPx;
+}
 }
 
 // Atualizar rotação do objeto
@@ -1399,7 +1591,7 @@ state.layers[side].push({
     id,
     name: object.name || 'Elemento',
     object,
-    visible: true
+    visible: object.visible !== false
 });
 
 updateLayersList();
@@ -1426,6 +1618,13 @@ return state.currentSide;
 function updateLayersList() {
 layerListFront.innerHTML = '';
 layerListBack.innerHTML = '';
+
+state.layers.front.forEach(layer => {
+    layer.visible = layer.object.visible !== false;
+});
+state.layers.back.forEach(layer => {
+    layer.visible = layer.object.visible !== false;
+});
 
 // Atualizar camadas da frente
 state.layers.front.forEach((layer, index) => {
@@ -1466,11 +1665,13 @@ if (layer.object.type === 'i-text' || layer.object.type === 'text') {
     icon = '●';
 }
 
+const visibilityIcon = layer.visible ? '👁️' : '🙈';
+
 li.innerHTML = `
     <span class="layer-icon">${icon}</span>
     <span class="layer-name">${layer.name}</span>
     <div class="layer-actions">
-        <button class="layer-btn" data-action="visibility">👁️</button>
+        <button class="layer-btn" data-action="visibility">${visibilityIcon}</button>
         <button class="layer-btn" data-action="delete">🗑️</button>
     </div>
 `;
@@ -1509,8 +1710,11 @@ return li;
 
 // Alternar visibilidade da camada
 function toggleLayerVisibility(layer, side) {
-layer.visible = !layer.visible;
-layer.object.visible = layer.visible;
+const isVisible = layer.object.visible !== false;
+const newVisibility = !isVisible;
+
+layer.object.visible = newVisibility;
+layer.visible = newVisibility;
 
 const currentCanvas = state.canvases[side];
 currentCanvas.renderAll();
@@ -1742,13 +1946,76 @@ state.bleedVisible = !state.bleedVisible;
     bleed.style.display = state.bleedVisible ? 'block' : 'none';
 });
 
-hideBleedBtn.innerHTML = state.bleedVisible ? 
-    '<span>📐</span> Ocultar Sangria' : 
+hideBleedBtn.innerHTML = state.bleedVisible ?
+    '<span>📐</span> Ocultar Sangria' :
     '<span>📏</span> Mostrar Sangria';
 }
 
+function drawRoundedRect(ctx, x, y, width, height, radius) {
+const r = Math.min(radius, width / 2, height / 2);
+ctx.beginPath();
+ctx.moveTo(x + r, y);
+ctx.lineTo(x + width - r, y);
+ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+ctx.lineTo(x + width, y + height - r);
+ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+ctx.lineTo(x + r, y + height);
+ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+ctx.lineTo(x, y + r);
+ctx.quadraticCurveTo(x, y, x + r, y);
+ctx.closePath();
+}
+
+function getRoundedCanvasDataURL(canvas, multiplier = 1) {
+return new Promise(resolve => {
+    const baseData = canvas.toDataURL({
+        format: 'png',
+        multiplier: multiplier
+    });
+
+    if (!state.cardConfig.rounded || !state.cardConfig.borderRadius) {
+        resolve(baseData);
+        return;
+    }
+
+    const width = canvas.getWidth() * multiplier;
+    const height = canvas.getHeight() * multiplier;
+    const radiusPx = Math.min(
+        state.cardConfig.borderRadius * PX_PER_MM * multiplier,
+        width / 2,
+        height / 2
+    );
+
+    if (radiusPx <= 0) {
+        resolve(baseData);
+        return;
+    }
+
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = width;
+    tempCanvas.height = height;
+    const ctx = tempCanvas.getContext('2d');
+
+    ctx.save();
+    drawRoundedRect(ctx, 0, 0, width, height, radiusPx);
+    ctx.clip();
+
+    const img = new Image();
+    img.onload = () => {
+        ctx.drawImage(img, 0, 0, width, height);
+        ctx.restore();
+        resolve(tempCanvas.toDataURL('image/png'));
+    };
+    img.onerror = () => {
+        ctx.restore();
+        resolve(baseData);
+    };
+    img.src = baseData;
+});
+}
+
 // Mostrar preview
-function showPreview() {
+async function showPreview() {
 const overlay = document.createElement('div');
 overlay.className = 'preview-overlay';
 
@@ -1757,17 +2024,9 @@ container.className = 'preview-container';
 
 // Criar imagens dos canvases
 const frontImg = document.createElement('img');
-frontImg.src = state.canvases.front.toDataURL({
-    format: 'png',
-    multiplier: 2 // Alta resolução
-});
 frontImg.className = 'preview-side';
 
 const backImg = document.createElement('img');
-backImg.src = state.canvases.back.toDataURL({
-    format: 'png',
-    multiplier: 2 // Alta resolução
-});
 backImg.className = 'preview-side';
 
 container.appendChild(frontImg);
@@ -1782,6 +2041,22 @@ closeBtn.addEventListener('click', () => {
 
 overlay.appendChild(container);
 overlay.appendChild(closeBtn);
+
+document.body.appendChild(overlay);
+
+try {
+    const [frontSrc, backSrc] = await Promise.all([
+        getRoundedCanvasDataURL(state.canvases.front, 2),
+        getRoundedCanvasDataURL(state.canvases.back, 2)
+    ]);
+
+    frontImg.src = frontSrc;
+    backImg.src = backSrc;
+} catch (error) {
+    console.error('Erro ao gerar preview', error);
+    frontImg.src = state.canvases.front.toDataURL({ format: 'png', multiplier: 2 });
+    backImg.src = state.canvases.back.toDataURL({ format: 'png', multiplier: 2 });
+}
 
 // Fechar com ESC
 const closeHandler = (e) => {
@@ -1799,8 +2074,6 @@ overlay.addEventListener('click', (e) => {
         document.removeEventListener('keydown', closeHandler);
     }
 });
-
-document.body.appendChild(overlay);
 }
 
 // Exportar para PDF em alta resolução
@@ -1837,17 +2110,13 @@ const backX = (pdfWidth / 2) + (margin / 2);
 const y = (pdfHeight - scaledHeight) / 2;
 
 // Adicionar frente em alta resolução
-const frontImgData = state.canvases.front.toDataURL({
-    format: 'png',
-    multiplier: 4 // Alta resolução para PDF
-});
+const [frontImgData, backImgData] = await Promise.all([
+    getRoundedCanvasDataURL(state.canvases.front, 4),
+    getRoundedCanvasDataURL(state.canvases.back, 4)
+]);
 pdf.addImage(frontImgData, 'PNG', frontX, y, scaledWidth, scaledHeight);
 
 // Adicionar verso em alta resolução
-const backImgData = state.canvases.back.toDataURL({
-    format: 'png',
-    multiplier: 4 // Alta resolução para PDF
-});
 pdf.addImage(backImgData, 'PNG', backX, y, scaledWidth, scaledHeight);
 
 // Adicionar labels
@@ -1894,8 +2163,19 @@ borderRadiusControl.classList.add('active');
 
 // Restaurar fundos de cor
 if (projectData.backgrounds) {
-state.canvases.front.setBackgroundColor(projectData.backgrounds.front);
-state.canvases.back.setBackgroundColor(projectData.backgrounds.back);
+const applySavedBackground = (side) => {
+    const savedColor = projectData.backgrounds[side] || '#ffffff';
+    state.canvases[side].setBackgroundColor(savedColor, () => {
+        state.canvases[side].renderAll();
+
+        if (side === state.currentSide) {
+            document.getElementById('global-background-color').value = rgbToHex(savedColor);
+        }
+    });
+};
+
+applySavedBackground('front');
+applySavedBackground('back');
 }
 
 // Restaurar imagens de fundo
