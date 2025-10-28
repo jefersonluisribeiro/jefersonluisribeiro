@@ -1,5 +1,6 @@
 // Estado da aplicação
 const PX_PER_MM = 3.78;
+const HISTORY_LIMIT = 6;
 
 const state = {
     currentTool: 'select',
@@ -28,6 +29,18 @@ panStartX: 0,
 panStartY: 0,
 containerStartX: 0,
 containerStartY: 0,
+panMode: false,
+zoomPoint: { x: 0, y: 0 },
+sizeUnit: 'px',
+keepAspectRatio: false,
+aspectRatio: 1,
+history: {
+    past: [],
+    future: [],
+    limit: HISTORY_LIMIT,
+    applying: false,
+    debounce: null
+}
     panMode: false,
     zoomPoint: { x: 0, y: 0 },
     sizeUnit: 'px',
@@ -80,6 +93,172 @@ if (roundedSelect.value === 'yes') {
     borderRadiusControl.classList.add('active');
 }
 });
+
+function createHistorySnapshot() {
+    if (!state.canvases.front || !state.canvases.back) {
+        return null;
+    }
+
+    const snapshot = {
+        front: state.canvases.front.toJSON(['name', 'layerId', 'groupId', 'rx', 'ry']),
+        back: state.canvases.back.toJSON(['name', 'layerId', 'groupId', 'rx', 'ry']),
+        cardConfig: { ...state.cardConfig }
+    };
+
+    return JSON.stringify(snapshot);
+}
+
+function setInitialHistorySnapshot() {
+    const snapshot = createHistorySnapshot();
+    if (!snapshot) {
+        return;
+    }
+
+    state.history.past = [snapshot];
+    state.history.future = [];
+}
+
+function recordHistorySnapshot() {
+    if (state.history.applying) {
+        return;
+    }
+
+    const snapshot = createHistorySnapshot();
+    if (!snapshot) {
+        return;
+    }
+
+    const past = state.history.past;
+    const last = past[past.length - 1];
+
+    if (last === snapshot) {
+        return;
+    }
+
+    past.push(snapshot);
+
+    if (past.length > state.history.limit) {
+        past.splice(0, past.length - state.history.limit);
+    }
+
+    state.history.future = [];
+}
+
+function scheduleHistorySnapshot() {
+    if (state.history.applying) {
+        return;
+    }
+
+    if (state.history.debounce) {
+        clearTimeout(state.history.debounce);
+    }
+
+    state.history.debounce = setTimeout(() => {
+        state.history.debounce = null;
+        recordHistorySnapshot();
+    }, 200);
+}
+
+function loadCanvasFromSnapshot(canvas, data) {
+    return new Promise(resolve => {
+        canvas.loadFromJSON(data, () => {
+            canvas.renderAll();
+            resolve();
+        });
+    });
+}
+
+async function applyHistorySnapshot(snapshotString) {
+    if (!snapshotString) {
+        return;
+    }
+
+    let snapshot;
+
+    try {
+        snapshot = JSON.parse(snapshotString);
+    } catch (error) {
+        console.error('Não foi possível aplicar o histórico', error);
+        return;
+    }
+
+    state.history.applying = true;
+
+    if (state.history.debounce) {
+        clearTimeout(state.history.debounce);
+        state.history.debounce = null;
+    }
+
+    try {
+        if (snapshot.cardConfig) {
+            state.cardConfig = { ...snapshot.cardConfig };
+        }
+
+        document.getElementById('card-width').value = state.cardConfig.width;
+        document.getElementById('card-height').value = state.cardConfig.height;
+        document.getElementById('card-rounded').value = state.cardConfig.rounded ? 'yes' : 'no';
+        document.getElementById('border-radius').value = state.cardConfig.borderRadius || 0;
+
+        if (state.cardConfig.rounded) {
+            borderRadiusControl.classList.add('active');
+        } else {
+            borderRadiusControl.classList.remove('active');
+        }
+
+        updateCanvasSize();
+
+        state.layers.front = [];
+        state.layers.back = [];
+
+        await Promise.all([
+            loadCanvasFromSnapshot(state.canvases.front, snapshot.front),
+            loadCanvasFromSnapshot(state.canvases.back, snapshot.back)
+        ]);
+
+        state.canvases.front.discardActiveObject();
+        state.canvases.back.discardActiveObject();
+        state.selectedObjects = [];
+
+        updatePropertiesPanel();
+        updateLayersList();
+        updateGlobalBackgroundColorInput();
+    } catch (error) {
+        console.error('Não foi possível aplicar o histórico', error);
+    } finally {
+        state.history.applying = false;
+    }
+}
+
+function undo() {
+    if (state.history.past.length <= 1) {
+        return;
+    }
+
+    const current = state.history.past.pop();
+    state.history.future.push(current);
+
+    if (state.history.future.length > state.history.limit) {
+        state.history.future.splice(0, state.history.future.length - state.history.limit);
+    }
+
+    const previous = state.history.past[state.history.past.length - 1];
+    applyHistorySnapshot(previous);
+}
+
+function redo() {
+    if (state.history.future.length === 0) {
+        return;
+    }
+
+    const snapshot = state.history.future.pop();
+    state.history.past.push(snapshot);
+
+    if (state.history.past.length > state.history.limit) {
+        state.history.past.splice(0, state.history.past.length - state.history.limit);
+    }
+
+    applyHistorySnapshot(snapshot);
+}
 
 // Configurar os ouvintes de eventos
 function setupEventListeners() {
@@ -205,6 +384,8 @@ function applyGlobalBackgroundColor() {
 
     updateGlobalBackgroundColorInput();
 
+    scheduleHistorySnapshot();
+
     // saveToSessionStorage();
 }
 
@@ -222,9 +403,10 @@ function applyGlobalBackground() {
         fabric.Image.fromURL(event.target.result, function(img) {
             // Configurar a imagem baseada no dimensionamento escolhido
             setupBackgroundImage(img, currentCanvas, bgSize, bgPosition);
-            
+
             currentCanvas.setBackgroundImage(img, function() {
                 currentCanvas.renderAll();
+                recordHistorySnapshot();
             });
         });
     };
@@ -355,9 +537,10 @@ function updateBackgroundStyle() {
     if (backgroundImage) {
         const bgSize = document.getElementById('background-size').value;
         const bgPosition = document.getElementById('background-position').value;
-        
+
         setupBackgroundImage(backgroundImage, currentCanvas, bgSize, bgPosition);
         currentCanvas.renderAll();
+        scheduleHistorySnapshot();
     }
 }
 
@@ -369,7 +552,9 @@ function removeGlobalBackground() {
     });
     currentCanvas.backgroundColor = '#ffffff';
     currentCanvas.renderAll();
-    
+
+    recordHistorySnapshot();
+
     // Atualizar o input de cor para refletir a mudança
     updateGlobalBackgroundColorInput();
 }
@@ -423,9 +608,11 @@ function updateShapeStyle() {
             }
         }
     });
-    
+
     const currentCanvas = state.canvases[state.currentSide];
     currentCanvas.renderAll();
+
+    scheduleHistorySnapshot();
 }
 
 // Tabs de lados
@@ -517,6 +704,23 @@ document.getElementById('preview-btn').addEventListener('click', showPreview);
 
 // Salvar
 document.getElementById('save-btn').addEventListener('click', saveToSessionStorage);
+
+// Undo/Redo buttons (opcionais)
+const undoBtn = document.getElementById('undo-btn');
+if (undoBtn) {
+    undoBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        undo();
+    });
+}
+
+const redoBtn = document.getElementById('redo-btn');
+if (redoBtn) {
+    redoBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        redo();
+    });
+}
 
 // Zoom
 document.getElementById('zoom-in').addEventListener('click', () => changeZoom(0.25, null));
@@ -684,26 +888,35 @@ Object.values(state.canvases).forEach(canvas => {
     canvas.on('object:modified', function(e) {
         updatePropertiesPanel();
         updateLayersList();
+        scheduleHistorySnapshot();
     });
-    
+
     canvas.on('object:added', function(e) {
         const object = e.target;
         const side = getObjectSide(object);
         
         // Adicionar à lista de camadas
         addLayer(object, side);
-        
+
         updateLayersList();
+
+        if (!state.history.applying) {
+            scheduleHistorySnapshot();
+        }
     });
-    
+
     canvas.on('object:removed', function(e) {
         const object = e.target;
         const side = getObjectSide(object);
         
         // Remover da lista de camadas
         removeLayer(object, side);
-        
+
         updateLayersList();
+
+        if (!state.history.applying) {
+            scheduleHistorySnapshot();
+        }
     });
     
     // Adicionar texto ao clicar com a ferramenta de texto
@@ -976,15 +1189,41 @@ const height = parseInt(document.getElementById('card-height').value);
 const rounded = document.getElementById('card-rounded').value === 'yes';
 const borderRadius = rounded ? parseInt(document.getElementById('border-radius').value) : 0;
 
-state.cardConfig = { 
-width, 
-height, 
-rounded, 
+state.cardConfig = {
+width,
+height,
+rounded,
 borderRadius
 };
 
 updateCanvasSize();
 updateCanvasBorder(); // Esta função ainda usa borderWidth e borderColor? Vamos ajustá-la.
+
+recordHistorySnapshot();
+}
+
+function convertPxToUnit(valuePx, unit = state.sizeUnit) {
+if (unit === 'mm') {
+    return valuePx / PX_PER_MM;
+}
+
+return valuePx;
+}
+
+function convertUnitToPx(value, unit = state.sizeUnit) {
+if (unit === 'mm') {
+    return value * PX_PER_MM;
+}
+
+return value;
+}
+
+function formatDimension(value, unit = state.sizeUnit) {
+if (unit === 'mm') {
+    return parseFloat(value.toFixed(2)).toString();
+}
+
+return Math.round(value).toString();
 }
 
 function convertPxToUnit(valuePx, unit = state.sizeUnit) {
@@ -1113,6 +1352,8 @@ state.selectedObjects.forEach(object => {
 
 const currentCanvas = state.canvases[state.currentSide];
 currentCanvas.renderAll();
+
+scheduleHistorySnapshot();
 }
 
 // Atualizar tamanho do objeto
@@ -1178,6 +1419,8 @@ currentCanvas.renderAll();
 if (heightPx > 0) {
     state.aspectRatio = widthPx / heightPx;
 }
+
+scheduleHistorySnapshot();
 }
 
 // Atualizar rotação do objeto
@@ -1195,6 +1438,8 @@ state.selectedObjects.forEach(object => {
 
 const currentCanvas = state.canvases[state.currentSide];
 currentCanvas.renderAll();
+
+scheduleHistorySnapshot();
 }
 
 // Atualizar opacidade do objeto
@@ -1212,6 +1457,8 @@ state.selectedObjects.forEach(object => {
 
 const currentCanvas = state.canvases[state.currentSide];
 currentCanvas.renderAll();
+
+scheduleHistorySnapshot();
 }
 
 // Inverter objeto horizontalmente
@@ -1226,6 +1473,8 @@ state.selectedObjects.forEach(object => {
 
 const currentCanvas = state.canvases[state.currentSide];
 currentCanvas.renderAll();
+
+scheduleHistorySnapshot();
 }
 
 // Inverter objeto verticalmente
@@ -1240,6 +1489,8 @@ state.selectedObjects.forEach(object => {
 
 const currentCanvas = state.canvases[state.currentSide];
 currentCanvas.renderAll();
+
+scheduleHistorySnapshot();
 }
 
 // Alinhar objetos
@@ -1352,6 +1603,8 @@ if (state.selectedObjects.length === 1) {
 
 currentCanvas.renderAll();
 updatePropertiesPanel();
+
+scheduleHistorySnapshot();
 }
 
 // Atualizar conteúdo do texto
@@ -1365,6 +1618,8 @@ state.selectedObjects[0].set({
 
 const currentCanvas = state.canvases[state.currentSide];
 currentCanvas.renderAll();
+
+scheduleHistorySnapshot();
 }
 
 // Atualizar estilo do texto
@@ -1383,6 +1638,8 @@ object.set({
 
 const currentCanvas = state.canvases[state.currentSide];
 currentCanvas.renderAll();
+
+scheduleHistorySnapshot();
 }
 
 // Duplicar objetos selecionados
@@ -1519,6 +1776,8 @@ state.selectedObjects.forEach(object => {
 
 currentCanvas.renderAll();
 updateLayersList();
+
+scheduleHistorySnapshot();
 }
 
 // Enviar objeto para trás
@@ -1533,6 +1792,8 @@ state.selectedObjects.forEach(object => {
 
 currentCanvas.renderAll();
 updateLayersList();
+
+scheduleHistorySnapshot();
 }
 
 // Aplicar cor de fundo
@@ -1541,6 +1802,8 @@ const color = document.getElementById('background-color').value;
 const currentCanvas = state.canvases[state.currentSide];
 currentCanvas.backgroundColor = color;
 currentCanvas.renderAll();
+
+scheduleHistorySnapshot();
 }
 
 // Aplicar imagem de fundo
@@ -1565,6 +1828,7 @@ reader.onload = function(event) {
         currentCanvas.sendToBack(img);
         currentCanvas.setBackgroundImage(img, function() {
             currentCanvas.renderAll();
+            recordHistorySnapshot();
         });
     });
 };
@@ -1580,6 +1844,8 @@ currentCanvas.setBackgroundImage(null, function() {
 document.getElementById('background-color').value = '#ffffff';
 currentCanvas.backgroundColor = '#ffffff';
 currentCanvas.renderAll();
+
+recordHistorySnapshot();
 }
 
 // Adicionar camada
@@ -1719,6 +1985,8 @@ layer.visible = newVisibility;
 const currentCanvas = state.canvases[side];
 currentCanvas.renderAll();
 updateLayersList();
+
+scheduleHistorySnapshot();
 }
 
 // Adicionar nova camada (botão)
@@ -1770,6 +2038,28 @@ return '#ffffff';
 
 // Manipular teclas
 function handleKeyDown(e) {
+// Undo/Redo
+const key = typeof e.key === 'string' ? e.key.toLowerCase() : '';
+const isModifier = e.ctrlKey || e.metaKey;
+
+if (isModifier && key === 'z') {
+    e.preventDefault();
+
+    if (e.shiftKey) {
+        redo();
+    } else {
+        undo();
+    }
+
+    return;
+}
+
+if (isModifier && key === 'y') {
+    e.preventDefault();
+    redo();
+    return;
+}
+
 // Tecla Delete
 if (e.key === 'Delete' && state.selectedObjects.length > 0) {
     deleteSelectedObjects();
@@ -1818,6 +2108,7 @@ if (state.selectedObjects.length > 0 &&
     const currentCanvas = state.canvases[state.currentSide];
     currentCanvas.renderAll();
     updatePropertiesPanel(); // Atualiza a posição no painel de propriedades
+    scheduleHistorySnapshot();
 }
 }
 
@@ -2146,9 +2437,21 @@ alert('Projeto salvo com sucesso!');
 
 // Carregar do Session Storage
 function loadFromSessionStorage() {
+state.history.applying = true;
+state.layers.front = [];
+state.layers.back = [];
+
 const savedData = sessionStorage.getItem('cardEditorProject');
 if (savedData) {
-const projectData = JSON.parse(savedData);
+let projectData;
+
+try {
+    projectData = JSON.parse(savedData);
+} catch (error) {
+    console.error('Erro ao ler projeto salvo', error);
+    finalizeSessionLoad();
+    return;
+}
 
 // Restaurar configurações do cartão
 state.cardConfig = projectData.cardConfig;
@@ -2165,6 +2468,12 @@ borderRadiusControl.classList.add('active');
 if (projectData.backgrounds) {
 const applySavedBackground = (side) => {
     const savedColor = projectData.backgrounds[side] || '#ffffff';
+    state.canvases[side].backgroundColor = savedColor;
+    state.canvases[side].renderAll();
+
+    if (side === state.currentSide) {
+        document.getElementById('global-background-color').value = rgbToHex(savedColor);
+    }
     state.canvases[side].setBackgroundColor(savedColor, () => {
         state.canvases[side].renderAll();
 
@@ -2202,10 +2511,20 @@ Promise.all([
     loadBackgroundImage('back', projectData.backgroundImages.back)
 ]).then(() => {
     // Após carregar as imagens, carregar os canvases
-    loadCanvases(projectData);
+    return loadCanvases(projectData);
+}).then(() => {
+    finalizeSessionLoad();
+}).catch((error) => {
+    console.error('Erro ao carregar projeto salvo', error);
+    finalizeSessionLoad();
 });
 } else {
-loadCanvases(projectData);
+loadCanvases(projectData).then(() => {
+    finalizeSessionLoad();
+}).catch((error) => {
+    console.error('Erro ao carregar projeto salvo', error);
+    finalizeSessionLoad();
+});
 }
 
 function loadCanvases(projectData) {
@@ -2225,7 +2544,7 @@ const loadCanvas = (side, canvasData) => {
 };
 
 // Carregar os dois canvases
-Promise.all([
+return Promise.all([
     loadCanvas('front', projectData.frontCanvas),
     loadCanvas('back', projectData.backCanvas)
 ]).then(() => {
@@ -2237,5 +2556,12 @@ Promise.all([
 } else {
 // Se não há dados salvos, ainda assim atualizamos o color picker para a cor atual
 updateGlobalBackgroundColorInput();
+
+finalizeSessionLoad();
 }
+}
+
+function finalizeSessionLoad() {
+    state.history.applying = false;
+    setInitialHistorySnapshot();
 }
