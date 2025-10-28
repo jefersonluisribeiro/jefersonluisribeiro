@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Editor de Cartas com Fabric.js - Corrigido</title>
+    <!-- Fabric.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/4.5.0/fabric.min.js"></script>
+    <!-- jsPDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <!-- QR CODE -->
+     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="main.css" />
+</head>
+<body>
+
+<!-- Modal para QR Code -->
+<div id="qrcode-modal" class="modal">
+    <div class="modal-content">
+        <span class="close">&times;</span>
+        <h3>Gerar QR Code</h3>
+        <div class="form-group">
+            <label for="qrcode-type">Tipo</label>
+            <select id="qrcode-type">
+                <option value="text">Texto</option>
+                <option value="url">URL</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="qrcode-content">Conteúdo</label>
+            <textarea id="qrcode-content" rows="3" placeholder="Digite o texto ou URL"></textarea>
+        </div>
+        <button id="generate-qrcode">Gerar QR Code</button>
+    </div>
+</div>
+
+    <header>
+        <div class="logo">Editor de Cartas com Fabric.js - Corrigido</div>
+        <div>
+            <button id="save-btn">Salvar Projeto</button>
+            <button id="preview-btn">Visualizar</button>
+            <button id="export-btn">Exportar PDF</button>
+        </div>
+    </header>
+    
+    <div class="main-container">
+        <div class="sidebar">
+            <div class="card-config">
+                <h3 class="config-title">Configurações do Cartão</h3>
+                
+                <div class="form-group">
+                    <label for="card-width">Largura (mm)</label>
+                    <input type="number" id="card-width" value="88" min="10" max="500">
+                </div>
+                
+                <div class="form-group">
+                    <label for="card-height">Altura (mm)</label>
+                    <input type="number" id="card-height" value="63" min="10" max="500">
+                </div>
+                
+                <div class="form-group">
+                    <label for="card-rounded">Bordas Arredondadas</label>
+                    <select id="card-rounded">
+                        <option value="no">Não</option>
+                        <option value="yes">Sim</option>
+                    </select>
+                </div>
+                
+                <div class="form-group rounded-border-control" id="border-radius-control">
+                    <label for="border-radius">Raio da Borda (mm)</label>
+                    <input type="number" id="border-radius" value="3" min="1" max="50">
+                </div>
+                
+                <button id="apply-card-config">Aplicar Configurações</button>
+            </div>
+            
+            <div class="layer-panel">
+                <h3 class="config-title">Camadas</h3>
+                
+                <div class="side-tabs">
+                    <div class="side-tab active" data-side="front">Frente</div>
+                    <div class="side-tab" data-side="back">Verso</div>
+                </div>
+                
+                <ul class="layer-list" id="layer-list-front">
+                    <!-- Front layers will be added here dynamically -->
+                </ul>
+                
+                <ul class="layer-list hidden" id="layer-list-back">
+                    <!-- Back layers will be added here dynamically -->
+                </ul>
+                
+                <button id="add-layer-btn" style="margin-top: 10px;">Adicionar Elemento</button>
+            </div>
+
+            <!-- background config -->
+                <div class="background-config">
+                    <h3 class="config-title">Fundo do Cartão</h3>
+                    
+                    <div class="form-group">
+                        <label for="global-background-color">Cor de Fundo</label>
+                        <input type="color" id="global-background-color" value="#ffffff">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="global-background-image">Imagem de Fundo</label>
+                        <input type="file" id="global-background-image" accept="image/*,.svg">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="background-size">Dimensionamento</label>
+                        <select id="background-size">
+                            <option value="cover">Cobrir (cover)</option>
+                            <option value="contain">Conter (contain)</option>
+                            <option value="original">Tamanho Original</option>
+                            <option value="stretch">Esticar</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="background-position">Posicionamento</label>
+                        <select id="background-position">
+                            <option value="center">Centralizado</option>
+                            <option value="top-left">Superior Esquerdo</option>
+                            <option value="top-center">Superior Centro</option>
+                            <option value="top-right">Superior Direito</option>
+                            <option value="center-left">Centro Esquerdo</option>
+                            <option value="center-right">Centro Direito</option>
+                            <option value="bottom-left">Inferior Esquerdo</option>
+                            <option value="bottom-center">Inferior Centro</option>
+                            <option value="bottom-right">Inferior Direito</option>
+                        </select>
+                    </div>
+                    
+                    <button id="apply-global-background">Aplicar Fundo</button>
+                    <button id="remove-global-background">Remover Fundo</button>
+                </div>
+            <!-- background config -->
+            
+            <div class="properties-panel" id="properties-panel">
+                <h3 class="config-title">Propriedades</h3>
+                
+                <div class="tab-container">
+                    <div class="tab active" data-tab="adjustments">Ajustes</div>
+                    <div class="tab" data-tab="text">Texto</div>
+                    <!-- <div class="tab" data-tab="background">Fundo</div> -->
+                    <div class="tab" data-tab="shape">Forma</div>
+                </div>
+                
+                <div class="tab-content active" id="adjustments-tab">
+                    <div class="property-group">
+                        <div class="property-title">Posição</div>
+                        <div class="form-group">
+                            <label>X (px)</label>
+                            <input type="number" id="pos-x">
+                        </div>
+                        <div class="form-group">
+                            <label>Y (px)</label>
+                            <input type="number" id="pos-y">
+                        </div>
+                    </div>
+                    
+                    <div class="property-group">
+                        <div class="property-title">Tamanho</div>
+                        <div class="form-group">
+                            <label>Largura (px)</label>
+                            <input type="number" id="width">
+                        </div>
+                        <div class="form-group">
+                            <label>Altura (px)</label>
+                            <input type="number" id="height">
+                        </div>
+                    </div>
+                    
+                    <div class="property-group">
+                        <div class="property-title">Rotação</div>
+                        <div class="slider-container">
+                            <input type="range" min="0" max="360" value="0" class="slider" id="rotation">
+                            <span class="slider-value" id="rotation-value">0°</span>
+                        </div>
+                    </div>
+                    
+                    <div class="property-group">
+                        <div class="property-title">Opacidade</div>
+                        <div class="slider-container">
+                            <input type="range" min="0" max="100" value="100" class="slider" id="opacity">
+                            <span class="slider-value" id="opacity-value">100%</span>
+                        </div>
+                    </div>
+                    
+                    <div class="property-group">
+                        <div class="property-title">Transformações</div>
+                        <button id="flip-horizontal">Inverter Horizontal</button>
+                        <button id="flip-vertical">Inverter Vertical</button>
+                    </div>
+                    
+                    <div class="property-group">
+                        <div class="property-title">Alinhamento</div>
+                        <div class="alignment-controls">
+                            <button class="alignment-btn" data-align="left">⬅️ Esquerda</button>
+                            <button class="alignment-btn" data-align="center-x">↔️ Centro H</button>
+                            <button class="alignment-btn" data-align="right">➡️ Direita</button>
+                            <button class="alignment-btn" data-align="top">⬆️ Topo</button>
+                            <button class="alignment-btn" data-align="center-y">↕️ Centro V</button>
+                            <button class="alignment-btn" data-align="bottom">⬇️ Base</button>
+                            <button class="alignment-btn" data-align="center-both">⨁ Centro</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="tab-content" id="text-tab">
+                    <div class="form-group">
+                        <label for="text-content">Texto</label>
+                        <textarea id="text-content" rows="3"></textarea>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="font-family">Fonte</label>
+                        <select id="font-family">
+                            <option value="Arial">Arial</option>
+                            <option value="Times New Roman">Times New Roman</option>
+                            <option value="Courier New">Courier New</option>
+                            <option value="Georgia">Georgia</option>
+                            <option value="Verdana">Verdana</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="font-size">Tamanho da Fonte</label>
+                        <input type="number" id="font-size" value="16" min="8" max="72">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="text-color">Cor do Texto</label>
+                        <input type="color" id="text-color" value="#000000">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="text-align">Alinhamento do Texto</label>
+                        <select id="text-align">
+                            <option value="left">Esquerda</option>
+                            <option value="center">Centro</option>
+                            <option value="right">Direita</option>
+                            <option value="justify">Justificado</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="font-weight">Peso da Fonte</label>
+                        <select id="font-weight">
+                            <option value="normal">Normal</option>
+                            <option value="bold">Negrito</option>
+                            <option value="lighter">Mais fino</option>
+                            <option value="bolder">Mais grosso</option>
+                        </select>
+                    </div>
+                </div>
+
+            <!-- ADICIONAR ESTE CONTEÚDO DE ABA -->
+            <div class="tab-content" id="shape-tab">
+                <div class="form-group">
+                    <label for="shape-fill">Cor de Preenchimento</label>
+                    <input type="color" id="shape-fill" value="#3498db">
+                </div>
+                
+                <div class="form-group">
+                    <label for="shape-stroke">Cor da Borda</label>
+                    <input type="color" id="shape-stroke" value="#2980b9">
+                </div>
+                
+                <div class="form-group">
+                    <label for="shape-stroke-width">Tamanho da Borda (px)</label>
+                    <input type="number" id="shape-stroke-width" value="2" min="0" max="20">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="shape-rx">Raio dos Cantos (px)</label>
+                <input type="number" id="shape-rx" value="0" min="0" max="100">
+            </div>
+                
+                <div class="tab-content" id="background-tab">
+                    <div class="form-group">
+                        <label for="background-color">Cor de Fundo</label>
+                        <input type="color" id="background-color" value="#ffffff">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="background-image">Imagem de Fundo</label>
+                        <input type="file" id="background-image" accept="image/*,.svg">
+                    </div>
+                    
+                    <button id="apply-background">Aplicar Fundo</button>
+                    <button id="remove-background">Remover Fundo</button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="workspace">
+            <div class="workspace-controls">
+                <button class="workspace-btn" id="hide-labels-btn">
+                    <span>👁️</span> Ocultar Rótulos
+                </button>
+                <button class="workspace-btn" id="hide-bleed-btn">
+                    <span>📐</span> Ocultar Sangria
+                </button>
+            </div>
+            
+            <div class="zoom-controls">
+                <button class="zoom-btn" id="zoom-out">-</button>
+                <span class="zoom-level" id="zoom-level">100%</span>
+                <button class="zoom-btn" id="zoom-in">+</button>
+                <button class="zoom-btn" id="zoom-reset">⟳</button>
+            </div>
+            
+            <div class="workspace-area" id="workspace-area">
+                <div class="canvas-container" id="canvas-container">
+                    <div class="canvas-wrapper active" id="front-canvas-wrapper">
+                        <div class="side-label">Frente</div>
+                        <div class="bleed-overlay" id="front-bleed"></div>
+                        <canvas id="front-canvas"></canvas>
+                    </div>
+                    <div class="canvas-wrapper" id="back-canvas-wrapper">
+                        <div class="side-label">Verso</div>
+                        <div class="bleed-overlay" id="back-bleed"></div>
+                        <canvas id="back-canvas"></canvas>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="tools-panel">
+                <button class="tool-btn active" id="select-tool">
+                    <i>↖</i>
+                    <span>Selecionar</span>
+                </button>
+                <button class="tool-btn" id="text-tool">
+                    <i>T</i>
+                    <span>Texto</span>
+                </button>
+                <button class="tool-btn" id="image-tool">
+                    <i>🖼️</i>
+                    <span>Imagem</span>
+                </button>
+                <input type="file" id="image-upload" accept="image/*,.svg" class="hidden">
+                <button class="tool-btn" id="svg-tool">
+                    <i>🔺</i>
+                    <span>SVG</span>
+                </button>
+                <input type="file" id="svg-upload" accept=".svg" class="hidden">
+                <button class="tool-btn" id="rectangle-tool">
+                    <i>▭</i>
+                    <span>Retângulo</span>
+                </button>
+                <button class="tool-btn" id="circle-tool">
+                    <i>●</i>
+                    <span>Círculo</span>
+                </button>
+                <button class="tool-btn" id="duplicate-tool">
+                    <i>⎘</i>
+                    <span>Duplicar</span>
+                </button>
+                <button class="tool-btn" id="group-tool">
+                    <i>📁</i>
+                    <span>Agrupar</span>
+                </button>
+                <button class="tool-btn" id="ungroup-tool">
+                    <i>📄</i>
+                    <span>Desagrupar</span>
+                </button>
+                <button class="tool-btn" id="delete-tool">
+                    <i>🗑️</i>
+                    <span>Excluir</span>
+                </button>
+                <button class="tool-btn" id="bring-to-front-tool">
+                    <i>⬆️</i>
+                    <span>Trazer Frente</span>
+                </button>
+                <button class="tool-btn" id="send-to-back-tool">
+                    <i>⬇️</i>
+                    <span>Enviar Atrás</span>
+                </button>
+                <button class="tool-btn" id="qrcode-tool">
+                    <i>🔲</i><span>QR Code</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="main.js"></script>
+    <!-- Override de normalização de cor (depois do main.js) -->
+    <script src="color-fix.js"></script>
+
+</body>
+</html>
